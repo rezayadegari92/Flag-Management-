@@ -1,133 +1,82 @@
-from django.shortcuts import render
-from django.db.models import Q
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import FeatureFlag, AuditLog
-from .serializers import FeatureFlagSerializer, AuditLogSerializer
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from .utils import get_inactive_direct_dependencies, cascade_disable
+from .models import Flag, AuditLog
+from .serializers import AuditLogSerializer
+from rest_framework import generics
 
+class FlagToggleAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]  # یا هر مجوز دلخواه
 
-class FeatureFlagViewSet(viewsets.ModelViewSet):
-    queryset = FeatureFlag.objects.all()
-    serializer_class = FeatureFlagSerializer
-    http_method_names = ['get', 'post', 'patch']  # Allow list, create, retrieve, and update
+    def patch(self, request, pk):
+        
+        try:
+            flag = Flag.objects.get(pk=pk)
+        except Flag.DoesNotExist:
+            return Response({"error": "Flag not found."}, status=status.HTTP_404_NOT_FOUND)
 
-    @action(detail=True, methods=['post'], url_path='toggle')
-    def toggle(self, request, pk=None):
-        flag = self.get_object()
-        actor = request.data.get('actor')
-        reason = request.data.get('reason')
+        new_status = request.data.get('active')
+        reason = request.data.get('reason', '')
 
-        if not actor or not reason:
-            return Response(
-                {"error": "actor and reason are required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        if new_status not in [True, False]:
+            return Response({"error": "Invalid 'active' value."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # If flag is inactive and we're trying to enable it
-        if not flag.is_active:
-            # Check all dependencies are active
-            inactive_deps = flag.dependencies.filter(is_active=False)
-            if inactive_deps.exists():
-                return Response({
-                    "error": "Missing active dependencies",
-                    "missing_dependencies": [dep.name for dep in inactive_deps]
-                }, status=status.HTTP_400_BAD_REQUEST)
+        actor = request.user.username
 
-            # Enable the flag
-            flag.is_active = True
-            flag.save()
+        
+        if new_status and not flag.active:
+            missing = get_inactive_direct_dependencies(flag)
+            if missing:
+                return Response(
+                    {"error": "Missing active dependencies", "missing_dependencies": missing},
+                    status=status.HTTP_409_CONFLICT
+                )
+            
+            old = flag.active
+            flag.active = True
+            flag.save(update_fields=['active', 'updated_at'])
+           
             AuditLog.objects.create(
                 flag=flag,
-                action='TOGGLE',
+                action='toggle',
                 actor=actor,
-                reason=reason
+                reason=reason,
+                old_status=old,
+                new_status=True
             )
-            return Response(self.get_serializer(flag).data)
+            return Response({"status": "activated"}, status=status.HTTP_200_OK)
 
-        # If flag is active and we're trying to disable it
-        else:
-            # First disable this flag
-            flag.is_active = False
-            flag.save()
+       
+        if not new_status and flag.active:
+            old = flag.active
+            flag.active = False
+            flag.save(update_fields=['active', 'updated_at'])
             AuditLog.objects.create(
                 flag=flag,
-                action='TOGGLE',
+                action='toggle',
                 actor=actor,
-                reason=reason
+                reason=reason,
+                old_status=old,
+                new_status=False
             )
+            
+            cascade_disable(flag, actor, f"Parent {flag.name} was disabled. {reason}")
+            return Response({"status": "deactivated"}, status=status.HTTP_200_OK)
 
-            # Find all dependent flags that need to be disabled
-            cascade_disabled = []
-            self._disable_dependents(flag, cascade_disabled)
+        return Response({"status": "no_change"}, status=status.HTTP_200_OK)
+    
 
-            return Response({
-                "disabled_flag": flag.name,
-                "cascade_disabled": cascade_disabled
-            })
-
-    def _disable_dependents(self, flag, cascade_disabled, visited=None):
-        """Recursively disable all dependent flags, avoiding circular dependencies.
-        
-        Args:
-            flag: The flag being disabled
-            cascade_disabled: List to track disabled flags
-            visited: Set of flag IDs that have already been processed
-        """
-        if visited is None:
-            visited = set()
-
-        # Skip if we've already processed this flag
-        if flag.id in visited:
-            return
-
-        # Mark this flag as visited
-        visited.add(flag.id)
-
-        # Get all flags that directly depend on this flag
-        direct_dependents = FeatureFlag.objects.filter(
-            dependencies=flag,
-            is_active=True
-        )
-
-        for dependent in direct_dependents:
-            # Skip if we've already processed this dependent
-            if dependent.id in visited:
-                continue
-
-            # Disable the dependent
-            dependent.is_active = False
-            dependent.save()
-            cascade_disabled.append(dependent.name)
-
-            # Create audit log
-            AuditLog.objects.create(
-                flag=dependent,
-                action='AUTO_DISABLE',
-                actor='system',
-                reason=f'Dependency {flag.name} was disabled'
-            )
-
-            # Recursively disable its dependents
-            self._disable_dependents(dependent, cascade_disabled, visited)
+class FlagAuditLogAPIView(generics.ListAPIView):
+    serializer_class = AuditLogSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = AuditLog.objects.all()
 
 
-class AuditLogListAPIView(APIView):
-    def get(self, request):
-        queryset = AuditLog.objects.all().order_by('-created_at')
-        
-        # Optional filtering
-        flag_name = request.query_params.get('flag')
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
 
-        if flag_name:
-            queryset = queryset.filter(flag__name=flag_name)
-        if start_date:
-            queryset = queryset.filter(created_at__gte=start_date)
-        if end_date:
-            queryset = queryset.filter(created_at__lte=end_date)
+class FlagAuditLogAPIView(generics.ListAPIView):
+    serializer_class = AuditLogSerializer
 
-        serializer = AuditLogSerializer(queryset, many=True)
-        return Response(serializer.data)
+    def get_queryset(self):
+        flag_id = self.kwargs['pk']
+        return AuditLog.objects.filter(flag_id=flag_id).order_by('-timestamp')
