@@ -16,5 +16,4 @@ urlpatterns = [
     path('flags/<int:pk>/toggle/', FlagToggleAPIView.as_view(), name='flag-toggle'),
     path('flags/<int:pk>/audit/', FlagAuditLogAPIView.as_view(), name='flag-audit'),
     path('flags/', FlagListCreateAPIView.as_view(), name='flag-list-create'),
-
-]
+]   

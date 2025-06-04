@@ -15,7 +15,7 @@ class FlagCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Flag
-        fields = ['name', 'description', 'dependencies']
+        fields = ['id', 'name', 'description', 'dependencies', 'is_active']
 
     def validate_dependencies(self, value):
         deps = Flag.objects.filter(name__in=value)
@@ -31,34 +31,38 @@ class FlagCreateSerializer(serializers.ModelSerializer):
             for dep_flag in deps:
                 if _detect_cycle(flag.id, dep_flag.id):
                     raise serializers.ValidationError(f"Circular dependency detected: {flag.name} -> {dep_flag.name}")
-                Dependency.objects.create(flag=flag, depends_on=dep_flag)
+                Dependency.objects.create(flag=flag, dependency_on=dep_flag)
             AuditLog.objects.create(
                 flag=flag,
-                action='create',
+                action='CREATE',
                 actor=self.context['request'].user.username if self.context['request'].user.is_authenticated else 'anonymous',
                 reason='Flag created'
             )
             return flag
-        
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['dependencies'] = [dep.dependency_on.name for dep in instance.dependencies_as_child.all()]
+        return data
 
 class DependencySerializer(serializers.ModelSerializer):
-    depends_on = serializers.CharField(source='depends_on.name')
+    dependency_on = serializers.CharField(source='dependency_on.name')
 
     class Meta:
         model = Dependency
-        fields = ['depends_on']
+        fields = ['dependency_on']
 
 class FlagDetailSerializer(serializers.ModelSerializer):
     dependencies = serializers.SerializerMethodField()
-    active = serializers.BooleanField()
+    is_active = serializers.BooleanField()
 
     class Meta:
         model = Flag
-        fields = ['id', 'name', 'description', 'active', 'dependencies']
+        fields = ['id', 'name', 'description', 'is_active', 'dependencies']
 
     def get_dependencies(self, obj):
-        deps = Dependency.objects.filter(flag=obj).select_related('depends_on')
-        return [d.depends_on.name for d in deps]
+        deps = Dependency.objects.filter(flag=obj).select_related('dependency_on')
+        return [d.dependency_on.name for d in deps]
 
 
 class AuditLogSerializer(serializers.ModelSerializer):

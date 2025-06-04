@@ -16,8 +16,9 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-
+from flags.views import api_docs
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('flags.urls')),
+    path('', api_docs, name='api-docs'),
 ]

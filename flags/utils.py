@@ -26,8 +26,8 @@ def _detect_cycle(start_flag_id, dependency_on_id):
 
 def get_inactive_direct_dependencies(flag):
     
-    deps = Dependency.objects.filter(flag=flag).select_related('depends_on')
-    missing = [d.depends_on.name for d in deps if not d.depends_on.active]
+    deps = Dependency.objects.filter(flag=flag).select_related('dependency_on')
+    missing = [d.dependency_on.name for d in deps if not d.dependency_on.is_active]
     return missing
         
 
@@ -44,18 +44,18 @@ def cascade_disable(start_flag, actor, reason):
         if current_id in visited:
             continue
         visited.add(current_id)
-        dependents = Dependency.objects.filter(depends_on_id=current_id).values_list('flag_id', flat=True)
+        dependents = Dependency.objects.filter(dependency_on_id=current_id).values_list('flag_id', flat=True)
         for dependent_id in dependents:
             if dependent_id not in visited:
 
                 f = Flag.objects.get(id=dependent_id)
-                if f.active:
-                    old = f.active
-                    f.active = False
-                    f.save(update_fields=['active', 'updated_at'])
+                if f.is_active:
+                    old = f.is_active
+                    f.is_active = False
+                    f.save(update_fields=['is_active', 'updated_at'])
                     AuditLog.objects.create(
                         flag=f,
-                        action='auto_disable',
+                        action='AUTO_DISABLE',
                         actor=actor,
                         reason=f"Auto-disabled because dependency {start_flag.name} was disabled. {reason}",
                         old_status=old,

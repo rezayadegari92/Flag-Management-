@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flag Management Interface</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        .section {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"],
+        input[type="number"],
+        textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .response {
+            background: #f8f8f8;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+        }
+        .error {
+            color: #ff0000;
+            background: #ffe6e6;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .success {
+            color: #008000;
+            background: #e6ffe6;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .flag-list {
+            margin-top: 20px;
+        }
+        .flag-item {
+            background: white;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .flag-item button {
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Flag Management Interface</h1>
+
+    <!-- Create New Flag -->
+    <div class="section">
+        <h2>Create New Flag</h2>
+        <form id="createFlagForm">
+            <div class="form-group">
+                <label for="flagName">Flag Name:</label>
+                <input type="text" id="flagName" required>
+            </div>
+            <div class="form-group">
+                <label for="flagDescription">Description:</label>
+                <textarea id="flagDescription"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="flagDependencies">Dependencies (comma-separated):</label>
+                <input type="text" id="flagDependencies" placeholder="feature1, feature2">
+            </div>
+            <button type="submit">Create Flag</button>
+        </form>
+        <div id="createResponse" class="response"></div>
+    </div>
+
+    <!-- List All Flags -->
+    <div class="section">
+        <h2>All Flags</h2>
+        <button onclick="loadFlags()">Refresh Flags</button>
+        <div id="flagList" class="flag-list"></div>
+    </div>
+
+    <!-- Toggle Flag -->
+    <div class="section">
+        <h2>Toggle Flag Status</h2>
+        <form id="toggleFlagForm">
+            <div class="form-group">
+                <label for="toggleFlagId">Flag ID:</label>
+                <input type="number" id="toggleFlagId" required>
+            </div>
+            <div class="form-group">
+                <label for="toggleStatus">New Status:</label>
+                <select id="toggleStatus">
+                    <option value="true">Enable</option>
+                    <option value="false">Disable</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="toggleReason">Reason:</label>
+                <input type="text" id="toggleReason" required>
+            </div>
+            <div class="form-group">
+                <label for="toggleActor">Actor:</label>
+                <input type="text" id="toggleActor" required>
+            </div>
+            <button type="submit">Toggle Flag</button>
+        </form>
+        <div id="toggleResponse" class="response"></div>
+    </div>
+
+    <!-- View Audit Log -->
+    <div class="section">
+        <h2>View Audit Log</h2>
+        <form id="auditLogForm">
+            <div class="form-group">
+                <label for="auditFlagId">Flag ID:</label>
+                <input type="number" id="auditFlagId" required>
+            </div>
+            <button type="submit">View Audit Log</button>
+        </form>
+        <div id="auditResponse" class="response"></div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/flags';
+
+        // Create Flag
+        document.getElementById('createFlagForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const response = document.getElementById('createResponse');
+            try {
+                const dependencies = document.getElementById('flagDependencies').value
+                    .split(',')
+                    .map(d => d.trim())
+                    .filter(d => d);
+
+                const data = {
+                    name: document.getElementById('flagName').value,
+                    description: document.getElementById('flagDescription').value,
+                    dependencies: dependencies
+                };
+                
+                const res = await fetch(API_BASE + '/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await res.json();
+                if (!res.ok) {
+                    throw new Error(result.error || 'Failed to create flag');
+                }
+                
+                response.innerHTML = JSON.stringify(result, null, 2);
+                response.className = 'response success';
+                
+                // Clear form
+                document.getElementById('flagName').value = '';
+                document.getElementById('flagDescription').value = '';
+                document.getElementById('flagDependencies').value = '';
+                
+                // Refresh flag list
+                loadFlags();
+            } catch (error) {
+                response.innerHTML = 'Error: ' + error.message;
+                response.className = 'response error';
+                console.error('Error creating flag:', error);
+            }
+        });
+
+        // Load Flags
+        async function loadFlags() {
+            const flagList = document.getElementById('flagList');
+            try {
+                const res = await fetch(API_BASE + '/');
+                const data = await res.json();
+                // Handle both paginated and non-paginated responses
+                const flags = data.results || data;
+                
+                if (!Array.isArray(flags)) {
+                    throw new Error('Invalid response format');
+                }
+
+                flagList.innerHTML = flags.map(flag => `
+                    <div class="flag-item">
+                        <strong>${flag.name}</strong> (ID: ${flag.id})
+                        <br>
+                        Status: ${flag.is_active ? 'Active' : 'Inactive'}
+                        <br>
+                        Dependencies: ${(flag.dependencies || []).join(', ') || 'None'}
+                        <br>
+                        <button onclick="viewFlag(${flag.id})">View Details</button>
+                        <button onclick="viewAuditLog(${flag.id})">View Audit Log</button>
+                    </div>
+                `).join('');
+            } catch (error) {
+                flagList.innerHTML = '<div class="error">Error loading flags: ' + error.message + '</div>';
+                console.error('Error loading flags:', error);
+            }
+        }
+
+        // Toggle Flag
+        document.getElementById('toggleFlagForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const response = document.getElementById('toggleResponse');
+            try {
+                const data = {
+                    active: document.getElementById('toggleStatus').value === 'true',
+                    reason: document.getElementById('toggleReason').value,
+                    actor: document.getElementById('toggleActor').value
+                };
+                
+                const res = await fetch(API_BASE + '/' + document.getElementById('toggleFlagId').value + '/toggle/', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await res.json();
+                response.innerHTML = JSON.stringify(result, null, 2);
+                response.className = res.ok ? 'response success' : 'response error';
+                if (res.ok) loadFlags();
+            } catch (error) {
+                response.innerHTML = 'Error: ' + error.message;
+                response.className = 'response error';
+            }
+        });
+
+        // View Audit Log
+        document.getElementById('auditLogForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const response = document.getElementById('auditResponse');
+            try {
+                const res = await fetch(API_BASE + '/' + document.getElementById('auditFlagId').value + '/audit/');
+                const logs = await res.json();
+                response.innerHTML = JSON.stringify(logs, null, 2);
+                response.className = 'response success';
+            } catch (error) {
+                response.innerHTML = 'Error: ' + error.message;
+                response.className = 'response error';
+            }
+        });
+
+        // View Flag Details
+        async function viewFlag(id) {
+            const response = document.getElementById('createResponse');
+            try {
+                const res = await fetch(API_BASE + '/' + id + '/');
+                const flag = await res.json();
+                response.innerHTML = JSON.stringify(flag, null, 2);
+                response.className = 'response success';
+            } catch (error) {
+                response.innerHTML = 'Error: ' + error.message;
+                response.className = 'response error';
+            }
+        }
+
+        // View Audit Log
+        async function viewAuditLog(id) {
+            const response = document.getElementById('auditResponse');
+            try {
+                const res = await fetch(API_BASE + '/' + id + '/audit/');
+                const logs = await res.json();
+                response.innerHTML = JSON.stringify(logs, null, 2);
+                response.className = 'response success';
+            } catch (error) {
+                response.innerHTML = 'Error: ' + error.message;
+                response.className = 'response error';
+            }
+        }
+
+        // Load flags on page load
+        loadFlags();
+    </script>
+</body>
+</html> 
